@@ -46,6 +46,8 @@ func main() {
 
 	srv := parapet.NewBackend()
 	srv.Addr = *addr
+	srv.GraceTimeout = 3 * time.Second
+	srv.WaitBeforeShutdown = 0
 
 	srv.Use(logger.Stdout())
 	srv.Use(prom.Requests())
@@ -96,7 +98,11 @@ func main() {
 
 	prom.Connections(srv)
 	prom.Networks(srv)
-	srv.ListenAndServe()
+
+	err = srv.ListenAndServe()
+	if err != nil {
+		log.Fatalf("can not start server; %v", err)
+	}
 }
 
 func isReady(ctx context.Context) (bool, error) {
