@@ -5,8 +5,10 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/moonrhythm/parapet"
 	"github.com/moonrhythm/parapet/pkg/location"
@@ -105,8 +107,31 @@ func main() {
 	}
 }
 
-func isReady(ctx context.Context) (bool, error) {
+var lastBlock struct {
+	mu        sync.Mutex
+	Block     *types.Block
+	UpdatedAt time.Time
+}
+
+func getLastBlock(ctx context.Context) (*types.Block, error) {
+	lastBlock.mu.Lock()
+	defer lastBlock.mu.Unlock()
+
+	if time.Since(lastBlock.UpdatedAt) < time.Second {
+		return lastBlock.Block, nil
+	}
+
 	block, err := ethClient.BlockByNumber(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	lastBlock.Block = block
+	lastBlock.UpdatedAt = time.Now()
+	return lastBlock.Block, nil
+}
+
+func isReady(ctx context.Context) (bool, error) {
+	block, err := getLastBlock(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -117,7 +142,7 @@ func isReady(ctx context.Context) (bool, error) {
 }
 
 func isLive(ctx context.Context) bool {
-	_, err := ethClient.BlockByNumber(ctx, nil)
+	_, err := getLastBlock(ctx)
 	return err == nil
 }
 
