@@ -16,6 +16,9 @@ Reverse Proxy for geth node
 | Flag | Type | Description | Default |
 | --- | --- | --- | --- |
 | -addr | string | HTTP listening address | :80 |
+| -tls.addr | string | HTTPS listening address | :443 |
+| -tls.key | string | TLS private key file | |
+| -tls.cert | stirng | TLS certificate file | |
 | -geth.addr | string | Geth address | 127.0.0.1 |
 | -geth.http | string | Geth http port | 8545 |
 | -geth.ws | string | Geth websocket port | 8546 |

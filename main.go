@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log"
 	"net/http"
@@ -26,16 +27,29 @@ var (
 
 func main() {
 	var (
-		addr                = flag.String("addr", ":80", "address to listening")
+		addr                = flag.String("addr", ":80", "http address")
+		tlsAddr             = flag.String("tls.addr", ":443", "tls address")
+		tlsKey              = flag.String("tls.key", "", "TLS private key file")
+		tlsCert             = flag.String("tls.cert", "", "TLS certificate file")
 		gethAddr            = flag.String("geth.addr", "127.0.0.1", "geth address")
 		gethHTTP            = flag.String("geth.http", "8545", "geth http port")
 		gethWS              = flag.String("geth.ws", "8546", "geth ws port")
 		gethMetrics         = flag.String("geth.metrics", "6060", "geth metrics port")
 		gethBlockUnit       = flag.Duration("geth.block-unit", time.Second, "block timestamp unit")
-		gethHealthzDuration = flag.Duration("geth.healthy-duration", time.Minute, "duration from last block that mark as healthy")
+		gethHealthyDuration = flag.Duration("geth.healthy-duration", time.Minute, "duration from last block that mark as healthy")
 	)
 
 	flag.Parse()
+
+	log.Printf("geth-proxy")
+	log.Printf("HTTP address: %s", *addr)
+	log.Printf("HTTPS address: %s", *tlsAddr)
+	log.Printf("Geth address: %s", *gethAddr)
+	log.Printf("Geth http Port: %s", *gethHTTP)
+	log.Printf("Geth ws Port: %s", *gethWS)
+	log.Printf("Geth metrics port: %s", *gethMetrics)
+	log.Printf("Geth block unit: %s", *gethBlockUnit)
+	log.Printf("Geth healthy-duration: %s", *gethHealthyDuration)
 
 	// TODO: lazy dial ?
 	var err error
@@ -44,21 +58,18 @@ func main() {
 		log.Fatalf("can not dial geth; %v", err)
 	}
 	blockDuration = *gethBlockUnit
-	healthyDuration = *gethHealthzDuration
+	healthyDuration = *gethHealthyDuration
 
-	srv := parapet.NewBackend()
-	srv.Addr = *addr
-	srv.GraceTimeout = 3 * time.Second
-	srv.WaitBeforeShutdown = 0
+	var s parapet.Middlewares
 
-	srv.Use(logger.Stdout())
-	srv.Use(prom.Requests())
+	s.Use(logger.Stdout())
+	s.Use(prom.Requests())
 
 	// healthz
 	{
 		l := location.Exact("/healthz")
 		l.Use(parapet.Handler(healthz))
-		srv.Use(l)
+		s.Use(l)
 	}
 
 	// websocket
@@ -66,7 +77,7 @@ func main() {
 		l := location.Exact("/ws")
 		l.Use(stripprefix.New("/ws"))
 		l.Use(upstream.SingleHost(*gethAddr+":"+*gethWS, &upstream.HTTPTransport{}))
-		srv.Use(l)
+		s.Use(l)
 	}
 
 	// metrics
@@ -90,21 +101,76 @@ func main() {
 
 		l.Use(wrapHandler(http.NotFoundHandler()))
 
-		srv.Use(l)
+		s.Use(l)
 	}
 
 	// http
-	srv.Use(upstream.SingleHost(*gethAddr+":"+*gethHTTP, &upstream.HTTPTransport{
+	s.Use(upstream.SingleHost(*gethAddr+":"+*gethHTTP, &upstream.HTTPTransport{
 		MaxIdleConns: 10000,
 	}))
 
-	prom.Connections(srv)
-	prom.Networks(srv)
+	var wg sync.WaitGroup
 
-	err = srv.ListenAndServe()
-	if err != nil {
-		log.Fatalf("can not start server; %v", err)
+	if *addr != "" {
+		wg.Add(1)
+		srv := parapet.NewBackend()
+		srv.Addr = *addr
+		srv.GraceTimeout = 3 * time.Second
+		srv.WaitBeforeShutdown = 0
+		srv.Use(s)
+		prom.Connections(srv)
+		prom.Networks(srv)
+		go func() {
+			defer wg.Done()
+
+			err = srv.ListenAndServe()
+			if err != nil {
+				log.Fatalf("can not start server; %v", err)
+			}
+		}()
 	}
+
+	if *tlsAddr != "" {
+		wg.Add(1)
+		srv := parapet.NewBackend()
+		srv.Addr = *tlsAddr
+		srv.GraceTimeout = 3 * time.Second
+		srv.WaitBeforeShutdown = 0
+		srv.TLSConfig = &tls.Config{}
+
+		if *tlsKey == "" || *tlsCert == "" {
+			cert, err := parapet.GenerateSelfSignCertificate(parapet.SelfSign{
+				CommonName: "geth-proxy",
+				Hosts:      []string{"geth-proxy"},
+				NotBefore:  time.Now().Add(-5 * time.Minute),
+				NotAfter:   time.Now().AddDate(10, 0, 0),
+			})
+			if err != nil {
+				log.Fatalf("can not generate self signed cert; %v", err)
+			}
+			srv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)
+		} else {
+			cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+			if err != nil {
+				log.Fatalf("can not load x509 key pair; %v", err)
+			}
+			srv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)
+		}
+
+		srv.Use(s)
+		prom.Connections(srv)
+		prom.Networks(srv)
+		go func() {
+			defer wg.Done()
+
+			err = srv.ListenAndServe()
+			if err != nil {
+				log.Fatalf("can not start server; %v", err)
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 var lastBlock struct {
