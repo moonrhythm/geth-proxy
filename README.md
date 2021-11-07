@@ -19,12 +19,7 @@ Reverse Proxy for geth node
 | -tls.addr | string | HTTPS listening address | :443 |
 | -tls.key | string | TLS private key file | |
 | -tls.cert | stirng | TLS certificate file | |
-| -geth.addr | string | Geth address | 127.0.0.1 |
-| -geth.http | string | Geth http port | 8545 |
-| -geth.ws | string | Geth websocket port | 8546 |
-| -geth.metrics | string | Geth metrics port | 6060 |
-| -geth.block-unit | duration | Block timestamp unit | 1s |
-| -geth.healthy-duration | duration | Duration from last block that mark as healthy | 1m |
+| -upstream | string[] | Geth address | http://192.168.0.2,ws://192.168.0.2,http://192.168.0.3:8545 |
 
 ## Running
 
