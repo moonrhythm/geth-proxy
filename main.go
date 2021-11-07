@@ -17,6 +17,7 @@ import (
 	"github.com/moonrhythm/parapet/pkg/prom"
 	"github.com/moonrhythm/parapet/pkg/stripprefix"
 	"github.com/moonrhythm/parapet/pkg/upstream"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -59,6 +60,19 @@ func main() {
 	}
 	blockDuration = *gethBlockUnit
 	healthyDuration = *gethHealthyDuration
+
+	prom.Registry().MustRegister(headDuration)
+	go func() {
+		// update stats
+
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			promUpdateHeadDuration(ctx)
+			cancel()
+
+			time.Sleep(time.Second)
+		}
+	}()
 
 	var s parapet.Middlewares
 
@@ -189,7 +203,7 @@ func getLastBlock(ctx context.Context) (*types.Block, error) {
 
 	block, err := ethClient.BlockByNumber(ctx, nil)
 	if err != nil {
-		return nil, err
+		return lastBlock.Block, err
 	}
 	lastBlock.Block = block
 	lastBlock.UpdatedAt = time.Now()
@@ -251,4 +265,29 @@ func wrapHandler(h http.Handler) parapet.Middleware {
 	return parapet.MiddlewareFunc(func(http.Handler) http.Handler {
 		return h
 	})
+}
+
+const promNamespace = "geth_proxy"
+
+var headDuration = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: promNamespace,
+	Name:      "head_duration_seconds",
+}, []string{})
+
+func promUpdateHeadDuration(ctx context.Context) {
+	g, err := headDuration.GetMetricWith(nil)
+	if err != nil {
+		return
+	}
+
+	block, _ := getLastBlock(ctx)
+	if block == nil {
+		return
+	}
+	ts := block.Time()
+	ts = ts * uint64(blockDuration) // convert to ns
+	t := time.Unix(0, int64(ts))
+	diff := time.Since(t)
+
+	g.Set(float64(diff) / float64(time.Second))
 }
