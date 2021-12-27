@@ -32,6 +32,7 @@ func main() {
 		tlsAddr             = flag.String("tls.addr", ":443", "tls address")
 		tlsKey              = flag.String("tls.key", "", "TLS private key file")
 		tlsCert             = flag.String("tls.cert", "", "TLS certificate file")
+		logEnable           = flag.Bool("log", true, "Enable request log")
 		gethAddr            = flag.String("geth.addr", "127.0.0.1", "geth address")
 		gethHTTP            = flag.String("geth.http", "8545", "geth http port")
 		gethWS              = flag.String("geth.ws", "8546", "geth ws port")
@@ -77,7 +78,9 @@ func main() {
 
 	var s parapet.Middlewares
 
-	s.Use(logger.Stdout())
+	if *logEnable {
+		s.Use(logger.Stdout())
+	}
 	s.Use(prom.Requests())
 
 	// healthz
