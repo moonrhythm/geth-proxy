@@ -62,6 +62,7 @@ func main() {
 	healthyDuration = *gethHealthyDuration
 
 	prom.Registry().MustRegister(headDuration)
+	go prom.Start(":6060")
 	go func() {
 		// update stats
 
